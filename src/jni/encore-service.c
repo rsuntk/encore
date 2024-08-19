@@ -1,187 +1,262 @@
+/*
+ * Original by @Rem01 Gaming
+ * Reworked by Rissu/Faris sang Developer Amatir di Yukiprjkt
+ *
+ * What changed:
+ * - Implement ksu prctl symbol,
+ * - Optimize some code.
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
+#include <stdbool.h>
 #include <string.h>
-// #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/prctl.h>
 
-#define MAX_OUTPUT_LENGTH 1024
-#define MAX_COMMAND_LENGTH 512
+#define MAX_OUTPUT_LEN 1024
+#define MAX_CMD_LEN 512
 
-char command[MAX_COMMAND_LENGTH];
-char path[256];
+#define KERNEL_SU_OPTION 0xDEADBEEF
 
-char *trim_newline(char *str) {
-  if (str == NULL) return NULL;
-  char *end;
-  if ((end = strchr(str, '\n')) != NULL) {
-    *end = '\0';
-  }
-  return str;
+static char cmd[MAX_CMD_LEN];
+static char path[256];
+static bool is_root_ksu = false;
+
+static bool ksuctl(int cmd_ksu, void *arg1, void *arg2)
+{
+	int32_t result = 0;
+	prctl(KERNEL_SU_OPTION, cmd_ksu, arg1, arg2, &result);
+	return result == KERNEL_SU_OPTION;
 }
 
-char *execute_command(const char *command) {
-  FILE *fp;
-  char buffer[MAX_OUTPUT_LENGTH];
-  char *result = NULL;
-  size_t result_length = 0;
-
-  fp = popen(command, "r");
-  if (fp == NULL) {
-    printf("error: can't exec command %s\n", command);
-    return NULL;
-  }
-
-  while (fgets(buffer, sizeof(buffer), fp) != NULL) {
-    size_t buffer_length = strlen(buffer);
-    char *new_result = realloc(result, result_length + buffer_length + 1);
-    if (new_result == NULL) {
-      printf("error: memory allocation error.\n");
-      free(result);
-      pclose(fp);
-      return NULL;
-    }
-    result = new_result;
-    strcpy(result + result_length, buffer);
-    result_length += buffer_length;
-  }
-
-  if (result != NULL) {
-    result[result_length] = '\0';
-  }
-
-  if (pclose(fp) == -1) {
-    printf("error: closing command stream.\n");
-  }
-
-  return result;
+static int get_ksu_version(void)
+{
+	int32_t ksu_version = 0;
+	ksuctl(2, &ksu_version, NULL);
+	return ksu_version;
 }
 
-/* void write2file(const char *file_path, const char *content) {
-  if (access(file_path, F_OK) != -1) {
-    chmod(file_path, 0644);
-    FILE *file = fopen(file_path, "w");
-    if (file != NULL) {
-      fprintf(file, "%s\n", content);
-      fclose(file);
-      chmod(file_path, 0444);
-    } else {
-      printf("error: can't open %s\n", file_path);
-    }
-  } else {
-    printf("error: %s does not exist nor not accessible\n", file_path);
-  }
-} */
-
-void setPriorities(const char *pid) {
-  snprintf(command, sizeof(command), "su -c encore-setpriority %s", pid);
-  system(command);
+// 0 = non-KSU, >1 = KSU
+static void get_root_method(void)
+{
+	int ksu_version = get_ksu_version();
+	if (ksu_version > 0)
+		is_root_ksu = true;
 }
 
-void perf_common(void) { system("su -c encore-perfcommon"); }
-
-void performance_mode(void) { system("su -c encore-performance"); }
-
-void normal_mode(void) { system("su -c encore-normal"); }
-
-void powersave_mode(void) {
-  normal_mode();
-  system("su -c encore-powersave");
+static void ksu_escape_to_root(void)
+{
+	if (is_root_ksu) {
+		bool status = ksuctl(0, 0, NULL);
+		if (!status) {
+			fprintf(stderr, "Permission denied\n");
+			exit(EXIT_FAILURE);
+		}
+	}
 }
 
-int main(void) {
-  char *gamestart = NULL;
-  char *screenstate = NULL;
-  char *low_power = NULL;
-  char *pid = NULL;
-  int cur_mode = -1;
+static char *trim_newline(char *str)
+{
+	char *end;	
+	if (str == NULL)
+		return NULL;
+	
+	if ((end = strchr(str, '\n')) != NULL)
+	{
+		*end = '\0';
+	}
+	return str;
+}
 
-  perf_common();
+/*
+ * execute_command has changed!
+ * From execute_command(const char *cmd);
+ * to execute_cmd(const char *cmd, bool root);
+ *
+ * Usage example:
+ * execute_cmd("sh /sdcard/hello.sh", true);
+ * Run hello.sh as Root
+ *
+ */
+static char *execute_cmd(const char *cmd, bool root)
+{
+	FILE *fp;
+	char buf[MAX_OUTPUT_LEN];
+	char *result = NULL;
+	size_t result_len = 0;
+	
+	if (is_root_ksu && root)
+		ksu_escape_to_root();
+	else if (!is_root_ksu && root)
+		system("su");
+	
+	fp = popen(cmd, "r");
+	if (fp == NULL)
+	{
+		fprintf(stderr, "error: can't execute cmd: %s\n", cmd);
+		return NULL;
+	}
+	
+	while (fgets(buf, sizeof(buf), fp) != NULL)
+	{
+		size_t buf_len = strlen(buf);
+		char *new_result = realloc(result, result_len + buf_len + 1);
+		if (new_result == NULL)
+		{
+			fprintf(stderr, "error: memory allocation err.\n");
+			free(result);
+			pclose(fp);
+			return NULL;
+		}
+		result = new_result;
+		strcpy(result + result_len, buf);
+		result_len += buf_len;
+	}
+	
+	if (result != NULL)
+		result[result_len] = '\0';
+	
+	if (pclose(fp) == -1)
+	{
+		fprintf(stderr, "error: closing cmd stream.\n");
+	}
+	
+	if (!is_root_ksu && root)
+		system("exit");
+		
+	return result;
+}
 
-  while (1) {
-    if (!gamestart) {
-      gamestart =
-          execute_command("sh /data/encore/AppMonitoringUtil.sh | head -n 1");
-    } else {
-      snprintf(path, sizeof(path), "/proc/%s", trim_newline(pid));
-      if (access(path, F_OK) == -1) {
-        free(pid);
-        pid = NULL;
-        free(gamestart);
-        gamestart = NULL;
-        gamestart =
-            execute_command("sh /data/encore/AppMonitoringUtil.sh | head -n 1");
-      }
-    }
+// Allow ksu and magisk `su -c`
+static void su_c(char *su_cmd)
+{
+	char su_cmd_buf[sizeof(su_cmd)];
+	int ksu_version_code = get_ksu_version();
+	
+	if (is_root_ksu) {
+		ksu_escape_to_root();
+		printf("KSU Version: %d", ksu_version_code);
+		system(su_cmd);
+	} else {
+		snprintf(su_cmd_buf, sizeof(su_cmd), "su -c %s", su_cmd);
+		system(su_cmd_buf);
+	}
+}
 
-    screenstate = execute_command(
-        "su -c dumpsys power | grep -Eo "
-        "\"mWakefulness=Awake|mWakefulness=Asleep\" | awk -F'=' '{print $2}'");
-    low_power = execute_command(
-        "su -c dumpsys power | grep -Eo "
-        "\"mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled="
-        "false\" | awk -F'=' '{print $2}'");
+static void setPriorities(const char *pid)
+{
+	snprintf(cmd, sizeof(cmd), "encore-setpriority %s", pid);
+	su_c(cmd);
+}
 
-    if (screenstate == NULL) {
-      printf("error: screenstate is null\n");
-    } else if (gamestart && strcmp(trim_newline(screenstate), "Awake") == 0) {
-      // Apply performance mode
-      if (cur_mode != 1) {
-        cur_mode = 1;
-        printf("Applying performance mode\n");
-        snprintf(
-            command, sizeof(command),
-            "/system/bin/am start -a android.intent.action.MAIN -e toasttext "
-            "\"Boosting game %s\" -n bellavita.toast/.MainActivity",
-            trim_newline(gamestart));
-        system(command);
-        performance_mode();
+static void perf_common(void) { su_c("encore-perfcommon"); }
+static void perf_mode(void) { su_c("encore-performance"); }
+static void normal_mode(void) { su_c("encore-normal"); }
+static void powersave_mode(void)
+{
+	normal_mode();
+	su_c("encore-powersave");
+}
 
-        snprintf(command, sizeof(command), "pidof %s", trim_newline(gamestart));
-        pid = execute_command(command);
-        if (pid != NULL) {
-          setPriorities(trim_newline(pid));
-        } else {
-          printf("error: Game PID is null, can't set priority\n");
-        }
-      }
-    } else if (low_power && strcmp(trim_newline(low_power), "true") == 0) {
-      // Apply powersave mode
-      if (cur_mode != 2) {
-        cur_mode = 2;
-        printf("Applying powersave mode\n");
-        powersave_mode();
-      }
-    } else {
-      // Apply normal mode
-      if (cur_mode != 0) {
-        cur_mode = 0;
-        printf("Applying normal mode\n");
-        normal_mode();
-      }
-    }
-
-    if (gamestart) {
-      printf("gamestart: %s\n", trim_newline(gamestart));
-    } else {
-      printf("gamestart: NULL\n");
-    }
-    if (screenstate) {
-      printf("screenstate: %s\n", trim_newline(screenstate));
-      free(screenstate);
-      screenstate = NULL;
-    } else {
-      printf("screenstate: NULL\n");
-    }
-    if (low_power) {
-      printf("low_power: %s\n", trim_newline(low_power));
-      free(low_power);
-      low_power = NULL;
-    } else {
-      printf("low_power: NULL\n");
-    }
-
-    sleep(12);
-  }
-
-  return 0;
+int main(void)
+{
+	char *gamestart = NULL;
+	char *screenstate = NULL;
+	char *lpm = NULL;
+	char *pid = NULL;
+	int cur_mode = -1;
+	
+	get_root_method();
+	perf_common();
+	
+	while (1)
+	{
+			if (!gamestart)
+			{
+				execute_cmd("sh /data/encore/AppMonitoringUtil.sh | head -n 1", false);
+			} else {
+				snprintf(path, sizeof(path), "/proc/%s", trim_newline(pid));
+				if (access(path, F_OK) == -1) {
+					free(pid);
+					pid = NULL;
+					free(gamestart);
+					gamestart = NULL;
+					gamestart = execute_cmd("sh /data/encore/AppMonitoringUtil.sh | head -n 1", false);
+				}
+			}
+		      
+		screenstate = execute_cmd(
+			"dumpsys power | grep -Eo "
+			"\"mWakefulness=Awake|mWakefulness=Asleep\" | awk -F'=' '{print $2}'", true);
+			      	
+		lpm = execute_cmd(
+			"dumpsys power | grep -Eo "
+			"\"mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled="
+			"false\" | awk -F'=' '{print $2}'", true);
+		
+		if (screenstate == NULL)
+		{
+			fprintf(stderr, "error: screenstate is null! %d\n", is_root_ksu);
+		} else if (gamestart && strcmp(trim_newline(screenstate), "Awake") == 0) {
+			if (cur_mode != 1)
+			{
+				cur_mode = 1;
+				printf("Applying performance mode\n");
+				snprintf(cmd, sizeof(cmd),
+					"/system/bin/am start -a android.intent.action.MAIN -e toasttext "
+					"\"Boosting game %s\" -n bellavita.toast/.MainActivity",
+					trim_newline(gamestart));
+				system(cmd);
+				perf_mode();
+				
+				snprintf(cmd, sizeof(cmd), "pidof %s", trim_newline(gamestart));
+				pid = execute_cmd(cmd, false);
+				
+				if (pid != NULL)
+					setPriorities(trim_newline(pid));
+				else
+					fprintf(stderr, "error: Game PID is null, can't set priority\n");
+			}
+		} else if (lpm && strcmp(trim_newline(lpm), "true") == 0) {
+				if (cur_mode != 2)
+				{
+					cur_mode = 2;
+					printf("Applying powersave mode\n");
+					powersave_mode();
+				}
+		} else {
+				if (cur_mode != 0)
+				{
+					cur_mode = 0;
+					printf("Applying normal mode\n");
+					normal_mode();
+				}
+		}
+		
+		if (gamestart)
+			printf("gamestart: %s\n", trim_newline(gamestart));
+		else
+			fprintf(stderr, "gamestart: NULL\n");
+			
+		if (screenstate)
+		{
+			printf("screenstate: %s\n", trim_newline(screenstate));
+			free(screenstate);
+			screenstate = NULL;
+		} else {
+			fprintf(stderr, "screenstate: NULL\n");
+		}
+		
+		if (lpm)
+		{
+			printf("low_power: %s\n", trim_newline(lpm));
+			free(lpm);
+			lpm = NULL;
+		} else {
+			fprintf(stderr, "low_power: NULL\n");
+		}
+		sleep(12);
+	}
+	return 0;
 }
