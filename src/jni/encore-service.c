@@ -131,7 +131,8 @@ static char *execute_cmd(const char *cmd, bool root)
 // Allow ksu and magisk `su -c`
 static void su_c(char *su_cmd)
 {
-	char su_cmd_buf[sizeof(su_cmd)];
+	// follow cmd
+	char su_cmd_buf[MAX_CMD_LEN];
 	int ksu_version_code = get_ksu_version();
 	
 	if (is_root_ksu) {
@@ -139,7 +140,7 @@ static void su_c(char *su_cmd)
 		printf("KSU Version: %d", ksu_version_code);
 		system(su_cmd);
 	} else {
-		snprintf(su_cmd_buf, sizeof(su_cmd), "su -c %s", su_cmd);
+		snprintf(su_cmd_buf, sizeof(su_cmd_buf), "su -c %s", su_cmd);
 		system(su_cmd_buf);
 	}
 }
