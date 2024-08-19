@@ -41,7 +41,7 @@ static int get_ksu_version(void)
 static void get_root_method(void)
 {
 	int ksu_version = get_ksu_version();
-	if (ksu_version > 0)
+	if (ksu_version != 0)
 		is_root_ksu = true;
 }
 
@@ -62,8 +62,7 @@ static char *trim_newline(char *str)
 	if (str == NULL)
 		return NULL;
 	
-	if ((end = strchr(str, '\n')) != NULL)
-	{
+	if ((end = strchr(str, '\n')) != NULL) {
 		*end = '\0';
 	}
 	return str;
@@ -92,23 +91,22 @@ static char *execute_cmd(const char *cmd, bool root)
 		system("su");
 	
 	fp = popen(cmd, "r");
-	if (fp == NULL)
-	{
+	if (fp == NULL) {
 		fprintf(stderr, "error: can't execute cmd: %s\n", cmd);
 		return NULL;
 	}
 	
-	while (fgets(buf, sizeof(buf), fp) != NULL)
-	{
+	while (fgets(buf, sizeof(buf), fp) != NULL) {
 		size_t buf_len = strlen(buf);
 		char *new_result = realloc(result, result_len + buf_len + 1);
-		if (new_result == NULL)
-		{
+		
+		if (new_result == NULL) {
 			fprintf(stderr, "error: memory allocation err.\n");
 			free(result);
 			pclose(fp);
 			return NULL;
 		}
+		
 		result = new_result;
 		strcpy(result + result_len, buf);
 		result_len += buf_len;
@@ -117,8 +115,7 @@ static char *execute_cmd(const char *cmd, bool root)
 	if (result != NULL)
 		result[result_len] = '\0';
 	
-	if (pclose(fp) == -1)
-	{
+	if (pclose(fp) == -1) {
 		fprintf(stderr, "error: closing cmd stream.\n");
 	}
 	
@@ -128,20 +125,18 @@ static char *execute_cmd(const char *cmd, bool root)
 	return result;
 }
 
-// Allow ksu and magisk `su -c`
+// Allow ksu and magisk/apatch `su -c`
 static void su_c(char *su_cmd)
 {
-	// follow cmd
-	char su_cmd_buf[MAX_CMD_LEN];
 	int ksu_version_code = get_ksu_version();
 	
 	if (is_root_ksu) {
 		ksu_escape_to_root();
-		printf("KSU Version: %d", ksu_version_code);
+		printf("KSU Version: %d\n", ksu_version_code);
 		system(su_cmd);
 	} else {
-		snprintf(su_cmd_buf, sizeof(su_cmd_buf), "su -c %s", su_cmd);
-		system(su_cmd_buf);
+		snprintf(cmd, sizeof(cmd), "su -c %s", su_cmd);
+		system(cmd);
 	}
 }
 
@@ -171,22 +166,21 @@ int main(void)
 	get_root_method();
 	perf_common();
 	
-	while (1)
-	{
-			if (!gamestart)
-			{
-				execute_cmd("sh /data/encore/AppMonitoringUtil.sh | head -n 1", false);
-			} else {
-				snprintf(path, sizeof(path), "/proc/%s", trim_newline(pid));
-				if (access(path, F_OK) == -1) {
-					free(pid);
-					pid = NULL;
-					free(gamestart);
-					gamestart = NULL;
-					gamestart = execute_cmd("sh /data/encore/AppMonitoringUtil.sh | head -n 1", false);
-				}
+	while (1) {
+		if (!gamestart) {
+			execute_cmd("sh /data/encore/AppMonitoringUtil.sh | head -n 1", false);
+		} else {
+			snprintf(path, sizeof(path), "/proc/%s", trim_newline(pid));
+			if (access(path, F_OK) == -1) {
+				free(pid);
+				pid = NULL;
+				free(gamestart);
+				gamestart = NULL;
+				gamestart = execute_cmd("sh /data/encore/AppMonitoringUtil.sh | head -n 1", false);
 			}
-		      
+		}
+		
+		// TODO: Create working screenstate
 		screenstate = execute_cmd(
 			"dumpsys power | grep -Eo "
 			"\"mWakefulness=Awake|mWakefulness=Asleep\" | awk -F'=' '{print $2}'", true);
@@ -196,12 +190,10 @@ int main(void)
 			"\"mSettingBatterySaverEnabled=true|mSettingBatterySaverEnabled="
 			"false\" | awk -F'=' '{print $2}'", true);
 		
-		if (screenstate == NULL)
-		{
-			fprintf(stderr, "error: screenstate is null! %d\n", is_root_ksu);
+		if (screenstate == NULL) {
+			fprintf(stderr, "error: screenstate is null!\n");
 		} else if (gamestart && strcmp(trim_newline(screenstate), "Awake") == 0) {
-			if (cur_mode != 1)
-			{
+			if (cur_mode != 1) {
 				cur_mode = 1;
 				printf("Applying performance mode\n");
 				snprintf(cmd, sizeof(cmd),
@@ -220,15 +212,13 @@ int main(void)
 					fprintf(stderr, "error: Game PID is null, can't set priority\n");
 			}
 		} else if (lpm && strcmp(trim_newline(lpm), "true") == 0) {
-				if (cur_mode != 2)
-				{
+				if (cur_mode != 2) {
 					cur_mode = 2;
 					printf("Applying powersave mode\n");
 					powersave_mode();
 				}
 		} else {
-				if (cur_mode != 0)
-				{
+				if (cur_mode != 0) {
 					cur_mode = 0;
 					printf("Applying normal mode\n");
 					normal_mode();
@@ -240,8 +230,7 @@ int main(void)
 		else
 			fprintf(stderr, "gamestart: NULL\n");
 			
-		if (screenstate)
-		{
+		if (screenstate) {
 			printf("screenstate: %s\n", trim_newline(screenstate));
 			free(screenstate);
 			screenstate = NULL;
@@ -249,8 +238,7 @@ int main(void)
 			fprintf(stderr, "screenstate: NULL\n");
 		}
 		
-		if (lpm)
-		{
+		if (lpm) {
 			printf("low_power: %s\n", trim_newline(lpm));
 			free(lpm);
 			lpm = NULL;
